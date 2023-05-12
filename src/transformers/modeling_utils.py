@@ -2153,6 +2153,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
         subfolder = kwargs.pop("subfolder", "")
         commit_hash = kwargs.pop("_commit_hash", None)
         variant = kwargs.pop("variant", None)
+        skip_load_params = kwargs.pop("skip_load_params", False)
         use_safetensors = kwargs.pop("use_safetensors", None if is_safetensors_available() else False)
 
         if is_bitsandbytes_available():
@@ -2731,7 +2732,9 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin, PushToHubMix
                     )
                 del device_map_without_lm_head
 
-        if from_tf:
+        if skip_load_params:
+            pass
+        elif from_tf:
             if resolved_archive_file.endswith(".index"):
                 # Load from a TensorFlow 1.X checkpoint - provided by original authors
                 model = cls.load_tf_weights(model, config, resolved_archive_file[:-6])  # Remove the '.index'

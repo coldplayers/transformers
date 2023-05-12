@@ -329,7 +329,8 @@ class BloomAttention(nn.Module):
         # `float16` has a minimum value of -65504.0, whereas `bfloat16` and `float32` have a minimum value of `-3.4e+38`
         if input_dtype == torch.float16:
             attention_scores = attention_scores.to(torch.float)
-        attn_weights = torch.masked_fill(attention_scores, attention_mask, torch.finfo(attention_scores.dtype).min)
+        # attn_weights = torch.masked_fill(attention_scores, attention_mask, torch.finfo(attention_scores.dtype).min)
+        attn_weights = torch.masked_fill(attention_scores, attention_mask, -9984)
         attention_probs = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(input_dtype)
 
         # [batch_size, num_heads, q_length, kv_length]
@@ -753,7 +754,13 @@ class BloomModel(BloomPreTrainedModel):
         else:
             attention_mask = attention_mask.to(hidden_states.device)
 
-        alibi = self.build_alibi_tensor(attention_mask, self.num_heads, dtype=hidden_states.dtype)
+        from_1b7 = getattr(self.config, "from_1b7", False)
+        if from_1b7:
+            alibi = self.build_alibi_tensor(attention_mask, 16, dtype=hidden_states.dtype)
+            if self.num_heads > 16:
+                alibi = alibi.repeat(self.num_heads//16, 1, 1)
+        else:
+            alibi = self.build_alibi_tensor(attention_mask, self.num_heads, dtype=hidden_states.dtype)
 
         causal_mask = self._prepare_attn_mask(
             attention_mask,
