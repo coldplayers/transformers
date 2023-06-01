@@ -754,13 +754,23 @@ class BloomModel(BloomPreTrainedModel):
         else:
             attention_mask = attention_mask.to(hidden_states.device)
 
-        from_1b7 = getattr(self.config, "from_1b7", False)
-        if from_1b7:
-            alibi = self.build_alibi_tensor(attention_mask, 16, dtype=hidden_states.dtype)
-            if self.num_heads > 16:
-                alibi = alibi.repeat(self.num_heads//16, 1, 1)
+        source_size = getattr(self.config, "source_size", '')
+        if source_size == "1b7":
+            per_num_head = 16
+        elif source_size == "7b1":
+            per_num_head = 32
         else:
             alibi = self.build_alibi_tensor(attention_mask, self.num_heads, dtype=hidden_states.dtype)
+            per_num_head = self.num_heads
+
+        alibi = self.build_alibi_tensor(attention_mask, per_num_head, dtype=hidden_states.dtype)
+        if self.num_heads > per_num_head:
+            alibi = alibi.repeat(self.num_heads//per_num_head, 1, 1)
+
+        num_head_mod = self.num_heads % per_num_head
+        if num_head_mod:
+            alibi = alibi.view(batch_size, -1, 1, seq_length)
+            alibi = F.pad(alibi, (0, 0, 0, 0, 0, num_head_mod), "constant", 0).view(-1, 1, seq_length)
 
         causal_mask = self._prepare_attn_mask(
             attention_mask,
