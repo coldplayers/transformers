@@ -173,6 +173,7 @@ from .import_utils import (
     requires_backends,
     torch_only_method,
 )
+from .predictor import Predictor
 
 
 WEIGHTS_NAME = "pytorch_model.bin"
