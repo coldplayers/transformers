@@ -35,7 +35,8 @@ from ...utils import (
     add_start_docstrings_to_model_forward,
     logging,
     replace_return_docstrings,
-    Predictor
+    Predictor,
+    local_heavy_hitter_recent_mask
 )
 from .configuration_opt import OPTConfig
 
@@ -133,6 +134,9 @@ class OPTAttention(nn.Module):
         bias: bool = True,
         predict: bool = False,
         mid_features: int = 128,
+        h2o: bool = False,
+        heavy_budget: float = 0.5,
+        recent_budget: float = 0.5,
     ):
         super().__init__()
         self.embed_dim = embed_dim
@@ -157,6 +161,9 @@ class OPTAttention(nn.Module):
             self.predictor = Predictor(self.embed_dim, num_heads, mid_features=mid_features)
         else:
             self.predictor = None
+        self.h2o = h2o
+        self.heavy_budget = heavy_budget
+        self.recent_budget = recent_budget
 
     def mask_hidden_states(self, hidden_states):
         bsz, tgt_len, embed_dim = hidden_states.shape
@@ -251,6 +258,12 @@ class OPTAttention(nn.Module):
                 attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min, device=attn_weights.device)
             )
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
+        
+        if self.h2o:
+            min_val = torch.finfo(attn_weights.dtype).min
+            heavy_budget = int(self.heavy_budget * attn_weights.shape[-1])
+            recent_budget = int(self.recent_budget * attn_weights.shape[-1])
+            attn_weights = local_heavy_hitter_recent_mask(attn_weights, heavy_budget, recent_budget, min_val, None)
 
         # upcast to fp32 if the weights are in fp16. Please see https://github.com/huggingface/transformers/pull/17437
         if attn_weights.dtype == torch.float16:
@@ -314,6 +327,9 @@ class OPTDecoderLayer(nn.Module):
             bias=config.enable_bias,
             predict=getattr(config, "predict", False),
             mid_features=getattr(config, "mid_features", 128),
+            h2o=getattr(config, "h2o", False),
+            heavy_budget=getattr(config, "heavy_budget", 0.5),
+            recent_budget=getattr(config, "recent_budget", 0.5),
         )
         self.do_layer_norm_before = config.do_layer_norm_before
         self.dropout = config.dropout

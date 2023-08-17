@@ -174,6 +174,7 @@ from .import_utils import (
     torch_only_method,
 )
 from .predictor import Predictor
+from .h2o import local_heavy_hitter_recent_mask
 
 
 WEIGHTS_NAME = "pytorch_model.bin"
