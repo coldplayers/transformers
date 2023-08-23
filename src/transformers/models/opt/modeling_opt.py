@@ -134,7 +134,7 @@ class OPTAttention(nn.Module):
         bias: bool = True,
         predict: bool = False,
         mid_features: int = 128,
-        h2o: bool = False,
+        kv_sparse: bool = False,
         heavy_budget: float = 0.5,
         recent_budget: float = 0.5,
     ):
@@ -161,7 +161,7 @@ class OPTAttention(nn.Module):
             self.predictor = Predictor(self.embed_dim, num_heads, mid_features=mid_features)
         else:
             self.predictor = None
-        self.h2o = h2o
+        self.kv_sparse = kv_sparse
         self.heavy_budget = heavy_budget
         self.recent_budget = recent_budget
 
@@ -259,7 +259,7 @@ class OPTAttention(nn.Module):
             )
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
         
-        if self.h2o:
+        if self.kv_sparse:
             min_val = torch.finfo(attn_weights.dtype).min
             heavy_budget = int(self.heavy_budget * attn_weights.shape[-1])
             recent_budget = int(self.recent_budget * attn_weights.shape[-1])
@@ -327,7 +327,7 @@ class OPTDecoderLayer(nn.Module):
             bias=config.enable_bias,
             predict=getattr(config, "predict", False),
             mid_features=getattr(config, "mid_features", 128),
-            h2o=getattr(config, "h2o", False),
+            kv_sparse=getattr(config, "kv_sparse", False),
             heavy_budget=getattr(config, "heavy_budget", 0.5),
             recent_budget=getattr(config, "recent_budget", 0.5),
         )
