@@ -26,7 +26,8 @@ def local_heavy_hitter_recent_mask(attn_weights, heavy_budget, recent_budget, mi
 
     for token_index in range(heavy_budget+padding_length, seq_length):
 
-        tmp_attn_index = nn.functional.softmax(attn_weights[:,token_index,:], dim=-1, dtype=torch.float32).to(dtype_attn_weights)
+        # tmp_attn_index = nn.functional.softmax(attn_weights[:,token_index,:], dim=-1, dtype=torch.float32).to(dtype_attn_weights)
+        tmp_attn_index = tmp_attn[:,token_index,:]
         inf_score = torch.zeros_like(accumulated_attention_score)
         inf_score[:,max(token_index-recent_budget,0):token_index] = 1e10
         _, tmp_topk_index = (accumulated_attention_score+inf_score).topk(k=heavy_budget+recent_budget-1, dim=-1)
