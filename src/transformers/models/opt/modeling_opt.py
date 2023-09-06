@@ -261,10 +261,10 @@ class OPTAttention(nn.Module):
         
         if self.kv_sparse:
             min_val = torch.finfo(attn_weights.dtype).min
-            heavy_budget = min(int(0.5 * attn_weights.shape[-1]), 32)
-            recent_budget = min(int(0.5 * attn_weights.shape[-1]), 32)
-            # heavy_budget = 32
-            # recent_budget = 32
+            heavy_budget = int(self.heavy_budget * attn_weights.shape[-1])
+            recent_budget = int(self.recent_budget * attn_weights.shape[-1])
+            # heavy_budget = min(int(0.5 * attn_weights.shape[-1]), 32)
+            # recent_budget = min(int(0.5 * attn_weights.shape[-1]), 32)
             attn_weights = local_heavy_hitter_recent_mask(attn_weights, heavy_budget, recent_budget, min_val, None)
 
         # upcast to fp32 if the weights are in fp16. Please see https://github.com/huggingface/transformers/pull/17437
