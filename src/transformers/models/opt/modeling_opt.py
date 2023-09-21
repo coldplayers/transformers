@@ -265,7 +265,8 @@ class OPTAttention(nn.Module):
             min_recent_budget = min(int(0.5 * attn_weights.shape[-1]), 32)
             heavy_budget = max(int(self.heavy_budget * attn_weights.shape[-1]), min_heavy_budget)
             recent_budget = max(int(self.recent_budget * attn_weights.shape[-1]), min_recent_budget)
-            attn_weights = local_heavy_hitter_recent_mask(attn_weights, heavy_budget, recent_budget, min_val, None)
+            attn_weights = local_heavy_hitter_recent_mask(attn_weights, heavy_budget, recent_budget, min_val, None)[0]
+
 
         # upcast to fp32 if the weights are in fp16. Please see https://github.com/huggingface/transformers/pull/17437
         if attn_weights.dtype == torch.float16:
