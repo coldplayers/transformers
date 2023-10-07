@@ -34,6 +34,8 @@ from ...utils import (
     add_start_docstrings_to_model_forward,
     logging,
     replace_return_docstrings,
+    Predictor,
+    local_heavy_hitter_recent_mask
 )
 from .configuration_opt import OPTConfig
 
@@ -129,6 +131,11 @@ class OPTAttention(nn.Module):
         dropout: float = 0.0,
         is_decoder: bool = False,
         bias: bool = True,
+        predict: bool = False,
+        mid_features: int = 128,
+        kv_sparse: bool = False,
+        heavy_budget: float = 0.5,
+        recent_budget: float = 0.5,
     ):
         super().__init__()
         self.embed_dim = embed_dim
@@ -148,6 +155,24 @@ class OPTAttention(nn.Module):
         self.v_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
         self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.predict = predict
+        if self.predict:
+            self.predictor = Predictor(self.embed_dim, num_heads, mid_features=mid_features)
+        else:
+            self.predictor = None
+        self.kv_sparse = kv_sparse
+        self.heavy_budget = heavy_budget
+        self.recent_budget = recent_budget
+
+    def mask_hidden_states(self, hidden_states):
+        bsz, tgt_len, embed_dim = hidden_states.shape
+        mask_score = self.predictor(hidden_states) # [bsz, tgt_len, num_heads]
+        mask_score = mask_score.unsqueeze(-1) # [bsz, tgt_len, num_heads, 1]
+        mask_score = mask_score >= 0.5 # [bsz, tgt_len, num_heads, 1]
+        mask_score = mask_score.to(hidden_states.dtype) # [bsz, tgt_len, num_heads, 1]
+        mask_score = mask_score.repeat(1, 1, 1, self.head_dim) # [bsz, tgt_len, num_heads, head_dim]
+        mask_score = mask_score.view(bsz, tgt_len, embed_dim) # [bsz, tgt_len, embed_dim]
+        return mask_score
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
@@ -160,6 +185,7 @@ class OPTAttention(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         layer_head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
+        pre_hidden_states: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
 
@@ -168,6 +194,12 @@ class OPTAttention(nn.Module):
         is_cross_attention = key_value_states is not None
 
         bsz, tgt_len, _ = hidden_states.size()
+
+        if self.predict:
+            if pre_hidden_states is None:
+                mask_score = self.mask_hidden_states(hidden_states)
+            else:
+                mask_score = self.mask_hidden_states(pre_hidden_states)
 
         # get query proj
         query_states = self.q_proj(hidden_states) * self.scaling
@@ -225,6 +257,15 @@ class OPTAttention(nn.Module):
                 attn_weights, torch.tensor(torch.finfo(attn_weights.dtype).min, device=attn_weights.device)
             )
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
+        
+        if self.kv_sparse:
+            min_val = torch.finfo(attn_weights.dtype).min
+            min_heavy_budget = min(int(0.5 * attn_weights.shape[-1]), 32)
+            min_recent_budget = min(int(0.5 * attn_weights.shape[-1]), 32)
+            heavy_budget = max(int(self.heavy_budget * attn_weights.shape[-1]), min_heavy_budget)
+            recent_budget = max(int(self.recent_budget * attn_weights.shape[-1]), min_recent_budget)
+            attn_weights = local_heavy_hitter_recent_mask(attn_weights, heavy_budget, recent_budget, min_val, None)[0]
+
 
         # upcast to fp32 if the weights are in fp16. Please see https://github.com/huggingface/transformers/pull/17437
         if attn_weights.dtype == torch.float16:
@@ -268,6 +309,9 @@ class OPTAttention(nn.Module):
         # partitioned aross GPUs when using tensor-parallelism.
         attn_output = attn_output.reshape(bsz, tgt_len, self.embed_dim)
 
+        if self.predict:
+            attn_output = attn_output * mask_score
+
         attn_output = self.out_proj(attn_output)
 
         return attn_output, attn_weights_reshaped, past_key_value
@@ -283,6 +327,11 @@ class OPTDecoderLayer(nn.Module):
             dropout=config.attention_dropout,
             is_decoder=True,
             bias=config.enable_bias,
+            predict=getattr(config, "predict", False),
+            mid_features=getattr(config, "mid_features", 128),
+            kv_sparse=getattr(config, "kv_sparse", False),
+            heavy_budget=getattr(config, "heavy_budget", 0.5),
+            recent_budget=getattr(config, "recent_budget", 0.5),
         )
         self.do_layer_norm_before = config.do_layer_norm_before
         self.dropout = config.dropout
@@ -303,6 +352,7 @@ class OPTDecoderLayer(nn.Module):
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
+        pre_hidden_states: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         """
         Args:
@@ -333,6 +383,7 @@ class OPTDecoderLayer(nn.Module):
             attention_mask=attention_mask,
             layer_head_mask=layer_head_mask,
             output_attentions=output_attentions,
+            pre_hidden_states=pre_hidden_states,
         )
         hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
         hidden_states = residual + hidden_states
@@ -678,10 +729,12 @@ class OPTDecoder(OPTPreTrainedModel):
                         f" {head_mask.size()[0]}."
                     )
 
+        pre_hidden_states = None
         for idx, decoder_layer in enumerate(self.layers):
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
+            cur_hidden_states = hidden_states
 
             if self.training:
                 dropout_probability = torch.rand([])
@@ -714,7 +767,9 @@ class OPTDecoder(OPTPreTrainedModel):
                     past_key_value=past_key_value,
                     output_attentions=output_attentions,
                     use_cache=use_cache,
+                    pre_hidden_states=pre_hidden_states,
                 )
+            pre_hidden_states = cur_hidden_states
 
             hidden_states = layer_outputs[0]
 

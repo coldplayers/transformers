@@ -196,6 +196,9 @@ from .peft_utils import (
     find_adapter_config_file,
 )
 
+from .predictor import Predictor
+from .kv_sparse import local_heavy_hitter_recent_mask, ar_heavy_hitter_recent_mask
+
 
 WEIGHTS_NAME = "pytorch_model.bin"
 WEIGHTS_INDEX_NAME = "pytorch_model.bin.index.json"

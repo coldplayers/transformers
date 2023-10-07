@@ -2394,6 +2394,8 @@ class Trainer:
         run_dir = self._get_output_dir(trial=trial)
         output_dir = os.path.join(run_dir, checkpoint_folder)
         self.save_model(output_dir, _internal_call=True)
+        # # commit by shijinyuan
+        # return
         if self.is_deepspeed_enabled:
             # under zero3 model file itself doesn't get saved since it's bogus! Unless deepspeed
             # config `stage3_gather_16bit_weights_on_model_save` is True
