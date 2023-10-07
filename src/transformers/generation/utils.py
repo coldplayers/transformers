@@ -2615,13 +2615,31 @@ class GenerationMixin:
             # prepare model inputs
             model_inputs = self.prepare_inputs_for_generation(input_ids, **model_kwargs)
 
-            # forward pass to get next token
-            outputs = self(
-                **model_inputs,
-                return_dict=True,
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states,
-            )
+            if model_kwargs.get("is_first_forward", True):
+                for idx in range(model_inputs["input_ids"].shape[1]):
+                    new_inputs = {}
+                    for k, v in model_inputs.items():
+                        if isinstance(v, torch.Tensor) and k != "past_key_values":
+                            new_inputs[k] = v[:, idx:idx + 1]
+                        else:
+                            new_inputs[k] = v
+                    # print(new_inputs["input_ids"], new_inputs["position_ids"], new_inputs["attention_mask"])
+                    # forward pass to get next token
+                    outputs = self(
+                        **new_inputs,
+                        return_dict=True,
+                        output_attentions=output_attentions,
+                        output_hidden_states=output_hidden_states,
+                    )
+                    model_inputs["past_key_values"] = outputs.past_key_values
+            else:
+                # forward pass to get next token
+                outputs = self(
+                    **model_inputs,
+                    return_dict=True,
+                    output_attentions=output_attentions,
+                    output_hidden_states=output_hidden_states,
+                )
 
             if synced_gpus and this_peer_finished:
                 continue  # don't waste resources running the code we don't need
